@@ -251,7 +251,9 @@ footer .wrap{display:flex; justify-content:space-between; gap:14px; flex-wrap:wr
 .lb .stage{flex:1; display:grid; place-items:center; min-height:0; position:relative}
 .lb .stage img,.lb .stage video,.lb .stage iframe{max-width:100%; max-height:100%; width:auto; height:auto;
   border:1px solid var(--line); background:#000}
-.lb .stage iframe{width:min(1180px,100%); aspect-ratio:16/9; height:auto}
+/* 유튜브는 플레이어 크기를 보고 화질을 고른다 → 무대를 꽉 채워야 1080p가 나온다 */
+.lb .stage iframe{width:100%; max-width:min(1920px, calc((100vh - 230px) * 16 / 9));
+  aspect-ratio:16/9; height:auto}
 /* 소스가 깨져도 300x150 기본크기로 쪼그라들지 않게 */
 .lb .stage video{width:min(1180px,100%); min-height:240px; object-fit:contain}
 .lb .stage .ph{width:min(980px,100%); aspect-ratio:16/9; display:grid; place-items:center;
@@ -788,6 +790,21 @@ async function videoThumb(file){
   } finally { URL.revokeObjectURL(url); }
 }
 
+/* 이 브라우저가 실제로 디코딩할 수 있는 영상인지 미리 확인.
+   HEVC(H.265)·ProRes 등은 Chrome이 못 읽어서, 올린 뒤에야 재생 안 되는 걸 알게 되는 걸 막는다. */
+function canDecodeVideo(file){
+  const url = URL.createObjectURL(file);
+  return new Promise(res=>{
+    const v = document.createElement('video');
+    let done = false;
+    const fin = ok => { if(done) return; done = true; URL.revokeObjectURL(url); res(ok); };
+    v.onloadeddata = () => fin(v.videoWidth > 0);   // 폭이 0이면 오디오만 읽힌 것
+    v.onerror = () => fin(false);
+    setTimeout(() => fin(false), 10000);
+    v.muted = true; v.preload = 'metadata'; v.src = url;
+  });
+}
+
 /* 유튜브 주소면 유튜브 썸네일을 그대로 쓴다 */
 function ytId(u){ const m = String(u||'').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{6,})/); return m ? m[1] : ''; }
 function ytThumb(u){ const id = ytId(u); return id ? 'https://img.youtube.com/vi/' + id + '/hqdefault.jpg' : ''; }
@@ -799,6 +816,9 @@ async function quickAdd(file, setStatus){
   let thumb = '', media = {type:'', src:''};
 
   if(isVid){
+    setStatus('영상 확인 중…');
+    if(!await canDecodeVideo(file))
+      throw new Error('브라우저가 재생할 수 없는 코덱입니다 (HEVC/H.265 등). H.264 mp4로 다시 내보내세요');
     setStatus('영상 저장 중… (' + mb(file.size) + ')');
     media = {type:'video', src: await uploadVideo(file)};
     if(file.size > 30*1024*1024)
@@ -1024,7 +1044,8 @@ function attachHover(el, w){
         node.frameBorder = '0';
         /* 미리보기는 소리 없이 반복 — 목록에서 여러 개가 동시에 울리면 안 되므로 mute 고정 */
         node.src = 'https://www.youtube.com/embed/' + id +
-          '?autoplay=1&mute=1&controls=0&loop=1&playlist=' + id + '&modestbranding=1&rel=0';
+          '?autoplay=1&mute=1&controls=0&loop=1&playlist=' + id +
+          '&modestbranding=1&rel=0&cc_load_policy=0&iv_load_policy=3';
         thumb.appendChild(node);
       }
     }, isYT ? 420 : 200);                       // 유튜브는 무거우니 조금 더 기다렸다 로드
@@ -1104,8 +1125,11 @@ async function showLB(){
           GitHub에 올린 뒤 인터넷 주소로 접속하면 이 자리에서 바로 재생됩니다.</div>
       </div>`;
     } else {
-      /* 카드 클릭이라는 사용자 조작이 있었으므로 autoplay 가 허용된다 → 바로 재생 */
-      const u = embedURL(src) + (embedURL(src).includes('?') ? '&' : '?') + 'autoplay=1&playsinline=1';
+      /* 카드 클릭이라는 사용자 조작이 있었으므로 autoplay 가 허용된다 → 바로 재생
+         cc_load_policy=0 : 자막 기본 끔 / vq=hd1080 : 최고화질 요청(유튜브가 참고만 함) */
+      const base = embedURL(src);
+      const u = base + (base.includes('?') ? '&' : '?')
+              + 'autoplay=1&playsinline=1&cc_load_policy=0&iv_load_policy=3&vq=hd1080&modestbranding=1';
       st.innerHTML = `<iframe src="${esc(u)}" allow="autoplay; fullscreen; encrypted-media"
         allowfullscreen referrerpolicy="strict-origin-when-cross-origin" frameborder="0"></iframe>`;
     }
@@ -1114,7 +1138,7 @@ async function showLB(){
     if(!u){ st.innerHTML = mediaMissing(src); return; }
     const v = document.createElement('video');
     Object.assign(v, {src:u, controls:true, loop:true, playsInline:true, autoplay:true, preload:'auto'});
-    v.onerror = () => { st.innerHTML = mediaMissing(src); };
+    v.onerror = () => diagnoseVideo(v, src, st);
     st.innerHTML = ''; st.appendChild(v);
     /* 소리 그대로 재생을 시도하고, 브라우저가 막으면 음소거로 재시도 (아예 안 나오는 것보단 낫다) */
     v.play().catch(()=>{ v.muted = true; v.play().catch(()=>{}); });
@@ -1124,13 +1148,40 @@ async function showLB(){
     st.innerHTML = `<img src="${esc(u)}" alt="">`;
   }
 }
-/* 파일을 못 찾았을 때 — 조용히 깨진 작은 플레이어 대신 원인을 알려준다 */
+/* 재생 실패 원인을 "추측"하지 말고 실제로 확인해서 구분한다.
+   video.onerror 는 파일이 없을 때도, 코덱을 못 읽을 때도 똑같이 발생하기 때문. */
+async function diagnoseVideo(v, src, st){
+  const code = v.error ? v.error.code : 0;      // 2:NETWORK 3:DECODE 4:SRC_NOT_SUPPORTED
+  let exists = null;                            // null = 확인 불가
+  if(v.src && !v.src.startsWith('blob:')){
+    try{ exists = (await fetch(v.src, {method:'HEAD'})).ok; }
+    catch(e){ exists = null; }                  // file:// 은 fetch가 막혀서 확인 불가
+  } else exists = !!v.src;
+
+  let title, body;
+  if(exists === false){
+    title = '영상 파일을 찾을 수 없습니다';
+    body = '이 경로에 파일이 없습니다. 내보내기 ZIP 안의 <b>assets 폴더</b>가 ' +
+           '<b>index.html 과 같은 위치</b>에 올라갔는지 확인해 주세요.';
+  } else if(exists === true || code === 3 || code === 4){
+    title = '파일은 있는데 브라우저가 재생하지 못합니다';
+    body = '<b>코덱 문제입니다.</b> 이 영상이 <b>HEVC(H.265)</b> 나 ProRes 같은 형식으로 ' +
+           '인코딩되어 있으면 Chrome이 디코딩하지 못합니다.<br>' +
+           '<b>H.264(AVC) mp4</b> 로 다시 내보내면 바로 재생됩니다. 긴 영상이면 유튜브 링크가 더 편합니다.';
+  } else {
+    title = '영상을 불러오지 못했습니다';
+    body = '네트워크 문제이거나 파일이 손상되었을 수 있습니다.';
+  }
+  st.innerHTML = `<div class="ph"><b style="color:var(--acc)">${title}</b><br><br>
+    <code style="font-family:var(--mono);font-size:11px;color:var(--dim)">${esc(src)}</code><br>
+    <span style="font-family:var(--mono);font-size:10.5px;color:var(--dim2)">
+      파일 존재: ${exists===null?'확인 불가':exists?'예':'아니오'} · 오류코드 ${code}</span><br><br>
+    ${body}</div>`;
+}
 function mediaMissing(src){
-  const local = /^assets\//.test(src);
-  return `<div class="ph"><b style="color:var(--acc)">영상 파일을 찾을 수 없습니다</b><br><br>
+  return `<div class="ph"><b style="color:var(--acc)">미디어를 찾을 수 없습니다</b><br><br>
     <code style="font-family:var(--mono);font-size:11px;color:var(--dim)">${esc(src)}</code><br><br>
-    ${local ? 'data.js 는 올렸는데 <b>assets 폴더를 같이 올리지 않은</b> 경우입니다.<br>내보내기 ZIP 안의 assets 폴더를 통째로 올려주세요.'
-            : '편집 모드에서 영상을 다시 등록해 주세요.'}</div>`;
+    내보내기 ZIP 안의 <b>assets 폴더</b>가 index.html 과 같은 위치에 올라갔는지 확인해 주세요.</div>`;
 }
 function closeLB(){ $('#lb').classList.remove('on'); $('#lbStage').innerHTML=''; }
 
@@ -1246,6 +1297,10 @@ function editWork(i){
     hookDrop($('#dThumb'), $('#pThumb'), 'image', async f=>{ thumbRef = await uploadImage(f); return thumbRef; });
     hookDrop($('#dMedia'), $('#pMedia'), 'any', async f=>{
       if(f.type.startsWith('video')){
+        if(!await canDecodeVideo(f)){
+          toast('⚠ 브라우저가 재생할 수 없는 코덱입니다 (HEVC 등). H.264 mp4로 내보내세요');
+          throw new Error('재생 불가 코덱 (H.264 mp4로 변환 필요)');
+        }
         mediaType='video'; mediaRef = await uploadVideo(f);
         if(f.size > 20*1024*1024) toast('⚠ 영상이 20MB를 넘습니다. 유튜브 링크를 권장해요.');
         if(!thumbRef){                                     // 썸네일이 비어 있으면 하이라이트 자동 추출
@@ -1626,6 +1681,7 @@ if(location.protocol !== 'file:' && !/localhost|127\.0\.0\.1/.test(location.host
 /* 콘솔 점검용 핸들 */
 window.__pf = { get D(){return D;}, save, renderAll, setEdit, exportSite, go, renderWork,
                 zipStore, crc32, uploadImage, uploadVideo, videoThumb, quickAdd, ytThumb, ytId,
+                canDecodeVideo, diagnoseVideo,
                 mediaGet, mediaAll, resolve, autoGrad, embedURL, showLB, refreshSize,
                 set forceLocal(v){ forceLocal = v; }, get forceLocal(){ return forceLocal; } };
 </script>

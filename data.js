@@ -1,4 +1,4 @@
-/* 자동 생성됨 — 2026. 8. 13. 오후 10:54:20 */
+/* 자동 생성됨 — 2026. 8. 13. 오후 11:02:08 */
 window.SITE_DATA = {
   "version": 1,
   "profile": {
@@ -125,6 +125,44 @@ window.SITE_DATA = {
     }
   ],
   "works": [
+    {
+      "id": "wmsrl72lwyvkl9",
+      "title": {
+        "ko": "레이저라이트",
+        "en": ""
+      },
+      "cat": "Professional",
+      "year": "2026",
+      "tags": [],
+      "thumb": "assets/img_msrl72lm4wfax.webp",
+      "media": {
+        "type": "video",
+        "src": "assets/vid_msrl6wajp2gz5.mp4"
+      },
+      "desc": {
+        "ko": "",
+        "en": ""
+      }
+    },
+    {
+      "id": "wmsrl62rm6t7of",
+      "title": {
+        "ko": "샷건 블라스터",
+        "en": ""
+      },
+      "cat": "Professional",
+      "year": "2026",
+      "tags": [],
+      "thumb": "https://img.youtube.com/vi/ayWW2ciIY3Q/hqdefault.jpg",
+      "media": {
+        "type": "youtube",
+        "src": "https://www.youtube.com/watch?v=ayWW2ciIY3Q"
+      },
+      "desc": {
+        "ko": "",
+        "en": ""
+      }
+    },
     {
       "id": "wmsrhr68177e9m",
       "title": {

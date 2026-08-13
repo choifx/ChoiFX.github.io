@@ -1,4 +1,4 @@
-/* 자동 생성됨 — 2026. 8. 13. 오후 11:02:08 */
+/* 자동 생성됨 — 2026. 8. 13. 오후 11:17:29 */
 window.SITE_DATA = {
   "version": 1,
   "profile": {
@@ -126,6 +126,25 @@ window.SITE_DATA = {
   ],
   "works": [
     {
+      "id": "wmsrlojut41y6u",
+      "title": {
+        "ko": "광물채취기 수정1",
+        "en": ""
+      },
+      "cat": "Professional",
+      "year": "2026",
+      "tags": [],
+      "thumb": "assets/img_msrlojur9yqy4.webp",
+      "media": {
+        "type": "video",
+        "src": "assets/vid_msrloe7dbn33s.mp4"
+      },
+      "desc": {
+        "ko": "",
+        "en": ""
+      }
+    },
+    {
       "id": "wmsrl72lwyvkl9",
       "title": {
         "ko": "레이저라이트",
@@ -176,25 +195,6 @@ window.SITE_DATA = {
       "media": {
         "type": "youtube",
         "src": "https://www.youtube.com/watch?v=q4j7z7BVmM8&feature=youtu.be"
-      },
-      "desc": {
-        "ko": "",
-        "en": ""
-      }
-    },
-    {
-      "id": "wmsrheoj6ezvke",
-      "title": {
-        "ko": "광물채취기 수정1",
-        "en": ""
-      },
-      "cat": "Professional",
-      "year": "2026",
-      "tags": [],
-      "thumb": "assets/img_msrheoiwo4p1m.webp",
-      "media": {
-        "type": "video",
-        "src": "assets/vid_msrheitj9majp.mp4"
       },
       "desc": {
         "ko": "",

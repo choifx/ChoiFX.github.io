@@ -252,6 +252,8 @@ footer .wrap{display:flex; justify-content:space-between; gap:14px; flex-wrap:wr
 .lb .stage img,.lb .stage video,.lb .stage iframe{max-width:100%; max-height:100%; width:auto; height:auto;
   border:1px solid var(--line); background:#000}
 .lb .stage iframe{width:min(1180px,100%); aspect-ratio:16/9; height:auto}
+/* 소스가 깨져도 300x150 기본크기로 쪼그라들지 않게 */
+.lb .stage video{width:min(1180px,100%); min-height:240px; object-fit:contain}
 .lb .stage .ph{width:min(980px,100%); aspect-ratio:16/9; display:grid; place-items:center;
   border:1px dashed var(--line2); color:var(--dim2); font-size:13px; text-align:center; padding:20px;
   white-space:pre-line; line-height:2}
@@ -344,7 +346,7 @@ body.editing .qzone{display:block}
 
 /* 카드 호버 프리뷰 */
 .card .hoverv{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:2;
-  background:#000; animation:fade .25s both}
+  background:#000; border:0; animation:fade .25s both; pointer-events:none}
 .card .vbadge{position:absolute; bottom:10px; right:10px; z-index:3; font-family:var(--mono);
   font-size:9.5px; letter-spacing:1px; padding:3px 8px; background:rgba(7,8,11,.82);
   border:1px solid var(--line2); color:var(--dim); backdrop-filter:blur(6px)}
@@ -989,26 +991,51 @@ async function renderWork(){
   $$('#wGrid .card').forEach(el => attachHover(el, D.works[+el.dataset.w]));
 }
 
-/* 카드에 마우스를 올리면 썸네일 자리에서 바로 영상 미리보기 */
+/* 카드에 마우스를 올리면 썸네일 자리에서 바로 미리보기 (직접 올린 영상 + 유튜브 모두) */
 function attachHover(el, w){
   const md = (w && w.media) || {};
-  if(md.type !== 'video' || !md.src) return;
-  let vid = null, timer = null;
+  if(!md.src) return;
+  const isVid = md.type === 'video' || /\.(mp4|webm|mov|m4v)$/i.test(md.src);
+  const isYT  = md.type === 'youtube' || /youtu/.test(md.src);
+  if(!isVid && !isYT) return;
+  /* 유튜브는 file:// 에서 임베드가 막히므로(오류 153) 로컬에선 미리보기를 걸지 않는다 */
+  if(isYT && isLocal()) return;
+
+  let node = null, timer = null, over = false;   // :hover 판정은 불안정해서 플래그로 직접 추적
+  const thumb = el.querySelector('.thumb');
   el.addEventListener('mouseenter', ()=>{
-    if(editing) return;
+    over = true;
+    if(node) return;
     timer = setTimeout(async ()=>{
-      const u = await resolve(md.src);
-      if(!u || !el.matches(':hover')) return;
-      vid = document.createElement('video');
-      Object.assign(vid, {src:u, muted:true, loop:true, playsInline:true, autoplay:true});
-      vid.className = 'hoverv';
-      el.querySelector('.thumb').appendChild(vid);
-      vid.play().catch(()=>{});
-    }, 200);                                    // 스쳐 지나갈 땐 로드하지 않도록 약간의 지연
+      if(!over) return;                         // 스쳐 지나간 경우
+      if(isVid){
+        const u = await resolve(md.src);
+        if(!u || !over) return;
+        node = document.createElement('video');
+        Object.assign(node, {src:u, muted:true, loop:true, playsInline:true, autoplay:true});
+        node.className = 'hoverv';
+        thumb.appendChild(node);
+        node.play().catch(()=>{});
+      } else {
+        const id = ytId(md.src); if(!id) return;
+        node = document.createElement('iframe');
+        node.className = 'hoverv';
+        node.allow = 'autoplay';
+        node.frameBorder = '0';
+        /* 미리보기는 소리 없이 반복 — 목록에서 여러 개가 동시에 울리면 안 되므로 mute 고정 */
+        node.src = 'https://www.youtube.com/embed/' + id +
+          '?autoplay=1&mute=1&controls=0&loop=1&playlist=' + id + '&modestbranding=1&rel=0';
+        thumb.appendChild(node);
+      }
+    }, isYT ? 420 : 200);                       // 유튜브는 무거우니 조금 더 기다렸다 로드
   });
   el.addEventListener('mouseleave', ()=>{
+    over = false;
     clearTimeout(timer);
-    if(vid){ vid.pause(); vid.removeAttribute('src'); vid.remove(); vid = null; }
+    if(node){
+      if(node.tagName === 'VIDEO'){ node.pause(); node.removeAttribute('src'); }
+      node.remove(); node = null;
+    }
   });
 }
 
@@ -1018,19 +1045,31 @@ function renderContact(){
   const a = $('#cMail'); a.textContent = m; a.href = 'mailto:' + m;
 }
 
-/* ═════════════ ROUTER ═════════════ */
-function go(v, push){
-  if(!['home','profile','work','contact'].includes(v)) v='home';
+/* ═════════════ ROUTER ═════════════
+   주소의 해시(#/work)만 바꾸고, 실제 화면 전환은 hashchange를 받아서 한다.
+   ⚠ history.pushState 를 쓰면 file:// 로 열었을 때 origin이 'null' 이라
+     SecurityError가 나서 방문 기록이 아예 안 쌓인다(= 뒤로가기가 사이트를 벗어남).
+     location.hash 대입은 file:// 에서도 기록이 정상적으로 쌓인다.            */
+const VIEWS = ['home','profile','work','contact'];
+function curView(){
+  const h = location.hash.replace(/^#\/?/,'').replace('edit','').replace(/[^a-z]/g,'');
+  return VIEWS.includes(h) ? h : 'home';
+}
+function applyView(v){                     // 화면만 바꾼다 (기록에 손대지 않음)
+  if(!VIEWS.includes(v)) v = 'home';
   $$('.view').forEach(s=> s.classList.toggle('on', s.id==='v-'+v));
   $$('#navLinks a').forEach(a=> a.classList.toggle('on', a.dataset.go===v));
   $('#navLinks').classList.remove('open');
-  if(push!==false && location.hash.replace(/^#\/?/,'').split('?')[0] !== v) history.replaceState(null,'','#/'+v);
   window.scrollTo({top:0, behavior:'instant'});
 }
+function go(v){                            // 사용자가 눌러서 이동 → 기록 한 칸 쌓기
+  if(!VIEWS.includes(v)) v = 'home';
+  if(curView() === v){ applyView(v); return; }   // 같은 탭 반복 클릭은 기록 안 쌓음
+  location.hash = '#/' + v;                      // → hashchange → routeFromHash → applyView
+}
 function routeFromHash(){
-  const h = location.hash.replace(/^#\/?/,'');
-  if(h.includes('edit')) setEdit(true);
-  go(h.replace('edit','').replace(/[^a-z]/g,'') || 'home', false);
+  if(location.hash.includes('edit')) setEdit(true);
+  applyView(curView());
 }
 
 /* ═════════════ LIGHTBOX ═════════════ */
@@ -1065,15 +1104,33 @@ async function showLB(){
           GitHub에 올린 뒤 인터넷 주소로 접속하면 이 자리에서 바로 재생됩니다.</div>
       </div>`;
     } else {
-      st.innerHTML = `<iframe src="${esc(embedURL(src))}" allow="autoplay; fullscreen; encrypted-media"
+      /* 카드 클릭이라는 사용자 조작이 있었으므로 autoplay 가 허용된다 → 바로 재생 */
+      const u = embedURL(src) + (embedURL(src).includes('?') ? '&' : '?') + 'autoplay=1&playsinline=1';
+      st.innerHTML = `<iframe src="${esc(u)}" allow="autoplay; fullscreen; encrypted-media"
         allowfullscreen referrerpolicy="strict-origin-when-cross-origin" frameborder="0"></iframe>`;
     }
-  } else if(md.type==='video' || /\.(mp4|webm|mov)$/i.test(src)){
-    st.innerHTML = `<video src="${esc(await resolve(src))}" controls autoplay loop muted playsinline></video>`;
+  } else if(md.type==='video' || /\.(mp4|webm|mov|m4v)$/i.test(src)){
+    const u = await resolve(src);
+    if(!u){ st.innerHTML = mediaMissing(src); return; }
+    const v = document.createElement('video');
+    Object.assign(v, {src:u, controls:true, loop:true, playsInline:true, autoplay:true, preload:'auto'});
+    v.onerror = () => { st.innerHTML = mediaMissing(src); };
+    st.innerHTML = ''; st.appendChild(v);
+    /* 소리 그대로 재생을 시도하고, 브라우저가 막으면 음소거로 재시도 (아예 안 나오는 것보단 낫다) */
+    v.play().catch(()=>{ v.muted = true; v.play().catch(()=>{}); });
   } else {
     const u = await resolve(src);
-    st.innerHTML = u ? `<img src="${esc(u)}" alt="">` : `<div class="ph">${esc(t('noMedia'))}</div>`;
+    if(!u){ st.innerHTML = mediaMissing(src); return; }
+    st.innerHTML = `<img src="${esc(u)}" alt="">`;
   }
+}
+/* 파일을 못 찾았을 때 — 조용히 깨진 작은 플레이어 대신 원인을 알려준다 */
+function mediaMissing(src){
+  const local = /^assets\//.test(src);
+  return `<div class="ph"><b style="color:var(--acc)">영상 파일을 찾을 수 없습니다</b><br><br>
+    <code style="font-family:var(--mono);font-size:11px;color:var(--dim)">${esc(src)}</code><br><br>
+    ${local ? 'data.js 는 올렸는데 <b>assets 폴더를 같이 올리지 않은</b> 경우입니다.<br>내보내기 ZIP 안의 assets 폴더를 통째로 올려주세요.'
+            : '편집 모드에서 영상을 다시 등록해 주세요.'}</div>`;
 }
 function closeLB(){ $('#lb').classList.remove('on'); $('#lbStage').innerHTML=''; }
 
@@ -1522,6 +1579,7 @@ document.addEventListener('keydown', e=>{
     if(e.key==='ArrowRight') $('#lbN').click();
   } else if($('#mdl').classList.contains('on') && e.key==='Escape') tryClose();
 });
+/* 뒤로가기/앞으로가기(마우스 사이드 버튼 포함)는 해시를 되돌리므로 hashchange로 잡힌다 */
 window.addEventListener('hashchange', routeFromHash);
 /* 히어로 편집 진입점: 편집모드에서 히어로 kicker 클릭 */
 $('#hKicker').onclick = ()=>{ if(editing) editHero(); };
